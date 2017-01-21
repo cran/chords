@@ -5,15 +5,15 @@
   Smooth estimates degree frequencies.
 }
 \description{
-  Smoothes estimated \eqn{N_k} by assuming that \eqn{beta_k=beta_0 * k^theta}.
+  Smoothes estimated \eqn{N_k} by assuming that \eqn{\beta_k=\beta_0 * k^\theta}.
 }
 \usage{
-  thetaSmoothingNks(rds.object,...)
+  thetaSmoothingNks(rds.object, bin=1)
 }
 
 \arguments{
-  \item{rds.object}{A \code{rds-object} class object as returned by \code{\link{estimate.b.k}}}
-  \item{...}{Firther arguments passed to \code{\link{getTheta}}.}
+  \item{rds.object}{A \code{rds-object} class object as returned by \code{\link{Estimate.b.k}}}
+  \item{bin}{Number of degrees to bin together for estimation.}
 }
 
 %\details{
@@ -28,7 +28,8 @@ Jonathan D. Rosenblatt \email{john.ros.work@gmail.com}
 }
 
 \seealso{
-\code{\link{estimate.b.k}}; \code{\link{getTheta}}
+  \code{\link{Estimate.b.k}},
+  \code{\link{getTheta}}
 }
 
 \examples{

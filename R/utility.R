@@ -31,18 +31,36 @@ findRecruiter <- function(active.coupons, coupon){
 # findRecruiter(active.coupons, coupon)
 
 
+makeRDSExample <- function(){
+  dk <- c(2, 1e1) # unique degree classes
+  true.dks <- rep(0,max(dk)); true.dks[dk] <- dk
+  true.Nks <- rep(0,max(dk)); true.Nks[dk] <- 1e3
+  beta <- 1 #5e-6
+  theta <-  0.1
+  true.log.bks <- rep(-Inf, max(dk))
+  true.log.bks[dk] <- theta*log(beta*dk)
+  sample.length <- 4e2
+  nsims <- 1e2
+  
+  makeRdsSample(
+    N.k =true.Nks , 
+    b.k = exp(true.log.bks),
+    sample.length = sample.length)
+}
+## Testing:
+# length(chords:::makeRDSExample())
 
 
 
-
+# Grow the snowball avolution from a degree sequence
 makeSnowBall <- function(rds.sample, seeds){
   coupon.inds <- grepl('coup[0-9]*', names(rds.sample))
-#   sample.length <- ncol(rds.sample)
+  #   sample.length <- ncol(rds.sample)
   
   I.t <- rep(NA, nrow(rds.sample))
   I.t[1] <- seeds
   degree.in <- rep(0, nrow(rds.sample))
-degree.in[1] <- rds.sample[1, 'NS1']
+  degree.in[1] <- rds.sample[1, 'NS1']
   degree.out <- rep(0, nrow(rds.sample))
   active.coupons <- list()
   for(period in 2:length(I.t)){
@@ -99,11 +117,16 @@ degree.in[1] <- rds.sample[1, 'NS1']
               degree.out=degree.out))
 }
 # ## Testing:
-# test.snowball <- makeSnowBall(rds.sample)
+# rds.sample <- makeRDSExample()
+# test.snowball <- makeSnowBall(rds.sample$rds.sample, seeds=1)
 # str(test.snowball)
-# table(rds.sample$NS1)
+# length(rds.sample$rds.sample$NS1)
 # table(test.snowball$degree.in)
 # table(test.snowball$degree.out)
+
+
+
+
 
 rdsObjectConstructor <- function(rds.sample=NULL,
                                  I.t=NULL,
@@ -121,11 +144,17 @@ rdsObjectConstructor <- function(rds.sample=NULL,
   return(result)
 }
 ## Testing
-# rdsObjectConstructor()
+# length(rdsObjectConstructor())
 
-initializeRdsObject <- function(rds.sample, bin=1L, seeds=1L){
+
+
+
+# TODO: deal with dropout.
+initializeRdsObject <- function(rds.sample, bin=1, seeds=1L){
   ## Verification:
-  if(any(table(rds.sample[,'interviewDt'])>1)) warning('Non unique interview times. Ignoring and proceeding...')
+  if(any(table(rds.sample[,'interviewDt'])>1)) {
+    message('Non unique interview times. Ignoring and proceeding...')
+  }
   
   ## Initialization:
   
@@ -157,18 +186,21 @@ initializeRdsObject <- function(rds.sample, bin=1L, seeds=1L){
 
 
 
+
+
 formatArrivalTimes <- function(arrival.times){
     
   ## Logic:
   # convert to numeric
   # set origin to sampling start
   # convert to informative scale
+  
   arrival.times.numeric <- as.numeric(arrival.times)
   arrival.times.origin <- arrival.times.numeric - min(arrival.times.numeric, na.rm = TRUE)
   for(k in 1:10){
-    if(max(arrival.times.origin %% 10^k)>0) break
+    if( max(arrival.times.origin %% 10^k) >0) break
     }
-  arrival.times.clean <- arrival.times.origin /10^(k-1)
+  arrival.times.clean <- arrival.times.origin / 10^(k-1)
   return(arrival.times.clean)
 }
 ## Testing:
@@ -192,18 +224,20 @@ smoothDegrees <- function(degree.counts){
 }
 
 
-
+## TODO: fix. Why non integer observed degrees?
+# re-estimate Nks by inflating observed counts 
 imputeEstimates <- function(Nk.estimates, n.k.counts, convergence){
-  conv.inds <- as.logical(convergence==0)
-  impute.inds <- as.logical(convergence==1L)
+  conv.inds <- as.logical(convergence<1)
+  impute.count <- sum(convergence==1, na.rm=TRUE )
   
-  if( sum(conv.inds, na.rm=TRUE)>2 && any(na.omit(impute.inds))){
-    .data.frame <- na.omit(data.frame(y=Nk.estimates, 
-                                      x=n.k.counts, 
-                                      conv.ind=conv.inds,
-                                      impute.ind=impute.inds))
-    lm.2 <- rlm(y ~ x - 1, data=.data.frame, subset=conv.inds , maxit=100L)
-    Nk.estimates[which(impute.inds)]  <- predict(lm.2, newdata = subset(.data.frame, impute.inds))  
+  if( sum(conv.inds, na.rm=TRUE)>2 && impute.count>0){
+    
+    .data.frame <- data.frame(y=Nk.estimates, x=n.k.counts) 
+    
+    lm.2 <- rlm(y ~ x - 1, data=.data.frame[conv.inds,], maxit=100L)
+    
+    Nk.estimates[which(!conv.inds)]  <- 
+      predict(lm.2, newdata = .data.frame[which(!conv.inds),]) 
   }
   return(Nk.estimates)                                                
 }
@@ -217,16 +251,23 @@ imputeEstimates <- function(Nk.estimates, n.k.counts, convergence){
 
 ## Estimate theta assuming beta_k=beta * k^theta:
 getTheta <- function(rds.object, bin=1, robust=TRUE){
-  nk.estimates <- rds.object$estimates
+  estimates <- rds.object$estimates
   
-  log.bks <- nk.estimates$log.bk.estimates
+  log.bks <- estimates$log.bk.estimates
   log.ks <- log(seq_along(log.bks)*bin)
-  ok.inds <- is.finite(log.bks)& !is.na(log.bks)
+  data <- data.frame(y=log.bks, x=log.ks)
+  
+  inds.impute <- !is.na(log.bks)
+  inds.ok <- is.finite(log.bks) & inds.impute
+  if(sum(inds.ok)<2) {
+    stop('At least two valid initial estimated required for this estimator.')
+  }
   
   if(robust) {
-    lm.1 <- rlm(log.bks[ok.inds]~log.ks[ok.inds])
-  } else {
-    lm.1 <- lm(log.bks~log.ks)
+    lm.1 <- rlm(y~x, data=data[inds.ok,])
+  } 
+  else {
+    lm.1 <- lm(y~x, data=data[inds.ok,])
   }
   
   coefs <- as.list(coef(lm.1) )
@@ -234,29 +275,60 @@ getTheta <- function(rds.object, bin=1, robust=TRUE){
   return(list(
     log.beta_0 = coefs$`(Intercept)`,
     theta = coefs$log.ks,
-    model=lm.1))
+    model=lm.1,
+    smooth=predict(lm.1, newdata=data[inds.impute,])))
 }
+## Testing:
+# data(brazil)
+# rds.object2<- initializeRdsObject(brazil)
+# rds.object <- Estimate.b.k(rds.object = rds.object2 )
+# getTheta(rds.object)
+
 
 
 ## Recovering Nk with smoothed Nk:
-thetaSmoothingNks <- function(rds.object,...){
-  theta <- getTheta(rds.object, ...)
-  smooth.bks <- exp(predict(theta$model))
-  A.ks <- na.omit(rds.object$estimates$A.ks)
-  B.ks <- na.omit(rds.object$estimates$B.ks)
-  n.k.counts  <- na.omit(rds.object$estimates$n.k.counts)
+thetaSmoothingNks <- function(rds.object, bin=1){
+  estimates <- rds.object$estimates
+  log.bks <- estimates$log.bk.estimates
+  
+  impute.inds <- !is.na(log.bks)
+  ok.inds <- is.finite(log.bks) & impute.inds
+  
+  theta <- getTheta(rds.object, bin=bin)
+  smooth.bks <- exp(theta$smooth)
+  
+  A.ks <- estimates$A.ks[impute.inds]
+  B.ks <- estimates$B.ks[impute.inds]
+  n.k.counts  <- estimates$n.k.counts[impute.inds]
   smooth.Nks <- (n.k.counts/smooth.bks + B.ks)/A.ks
   
   ## FIXME: 
   # if log.b.ks is infinite, smooth.Nks cannot be computed because
   # A.ks and B.ks will exist but smooth.bks will not. 
-  
   return(smooth.Nks)
 }
 ## Testing:
+# data(brazil)
+# rds.object2<- initializeRdsObject(brazil)
+# rds.object <- Estimate.b.k(rds.object = rds.object2 )
 # thetaSmoothingNks(rds.object)
 
 
+
+
+## Create snowball matrix
+makeNKT <- function(uniques, degree.in, degree.out){
+  result <- matrix(NA, 
+                   nrow=length(uniques), 
+                   ncol=length(degree.out), 
+                   dimnames=list(k=NULL, t=NULL))
+  for(i in seq_along(uniques)){
+   result[i,] <- cumsum(degree.in==uniques[i])
+  }
+  return(result)
+}
+## Testing:
+# makeNKT(uniques, degree.in, degree.out)
 
 
 
@@ -265,20 +337,17 @@ likelihood <- function(
   log.bk, Nk.estimates, I.t, 
   n.k.counts, degree.in, degree.out, 
   arrival.intervals, arrival.degree){
-  ### Verification:
   
   ### Initialization:
   uniques <- which(!is.na(n.k.counts))
   n.k.t <- makeNKT(uniques, degree.in, degree.out)
   betas <- exp(log.bk)
   
-  
   ## Computation
   result <- 0.
   for(i in seq_along(arrival.degree)){
     if(i==1) next()
     for(j in seq_along(uniques)){ 
-      #       i <- 5; j <- 5
       k <- uniques[[j]]
       lambda <-  betas[k] * (Nk.estimates[k] - n.k.t[j,i-1]) * I.t[i-1]
       lambda <- max(lambda, .Machine$double.eps) 
@@ -300,5 +369,19 @@ likelihood <- function(
 #                     rds.object$degree.in, 
 #                     rds.object$degree.out, 
 #                     rds.object$estimates$arrival.intervals, 
-#                     rds.object$estimates$arrival.degree,
-#                     const = 100)
+#                     rds.object$estimates$arrival.degree)
+
+
+# Make a control object for leave-d-out estimation
+makeJackControl <- function(d, B){
+  ## Verifications:
+  stopifnot( is.numeric(d))
+  stopifnot( is.numeric(B))
+  
+  # Pack output
+  result <- list(d=d, B=B)
+  class(result) <- 'jack.control'
+  return(result)
+}
+## Testing:
+# jack.control <- makeJackControl(10, 1e3)
